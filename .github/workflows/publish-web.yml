@@ -53,10 +53,10 @@ jobs:
         uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2
 
       - name: Run crate tests
-        run: cargo test -p craft-core -p craft-github
+        run: cargo test --locked -p craft-core -p craft-github
 
       - name: Build release binaries
-        run: cargo build --release -p craft-github --bin craft-fetch
+        run: cargo build --release --locked -p craft-github --bin craft-fetch
 
       - name: Fetch snapshot
         if: github.event_name != 'pull_request'

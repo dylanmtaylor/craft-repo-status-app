@@ -24,6 +24,8 @@ jobs:
     steps:
       - name: Checkout repository
         uses: actions/checkout@v7
+        with:
+          persist-credentials: false
 
       - name: Set up Node.js
         uses: actions/setup-node@v7
@@ -53,16 +55,25 @@ jobs:
       - name: Run crate tests
         run: cargo test -p craft-core -p craft-github
 
+      - name: Build release binaries
+        run: cargo build --release -p craft-github --bin craft-fetch
+
       - name: Fetch snapshot
+        if: github.event_name != 'pull_request'
         env:
           GITHUB_TOKEN: ${{ secrets.CRAFT_STATUS_TOKEN || secrets.GITHUB_TOKEN }}
         run: |
-          cargo run --release -p craft-github --bin craft-fetch -- --snapshot ui/dev-snapshot.json
+          ./target/release/craft-fetch --snapshot ui/dev-snapshot.json
 
       - name: Prepare site directory
         run: |
           mkdir -p _site
-          cp ui/index.html ui/style.css ui/dev-snapshot.json _site/
+          cp ui/index.html ui/style.css _site/
+          if [ -f ui/dev-snapshot.json ]; then
+            cp ui/dev-snapshot.json _site/
+          else
+            echo "{}" > _site/dev-snapshot.json
+          fi
           cp -R ui/build _site/build
 
       - name: Upload Pages artifact

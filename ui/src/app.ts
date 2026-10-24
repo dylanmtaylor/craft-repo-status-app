@@ -45,18 +45,38 @@ function save(k: string, v: unknown): void {
 type Child = Node | string | null | undefined | false;
 type Props = Record<string, unknown>;
 
-function el<K extends keyof HTMLElementTagNameMap>(tag: K, props: Props = {}, ...kids: (Child | Child[])[]): HTMLElementTagNameMap[K] {
-  const n = document.createElement(tag);
-  for (const [k, v] of Object.entries(props)) {
-    if (v === undefined || v === null || v === false) continue;
-    if (k === 'dataset' && typeof v === 'object') Object.assign(n.dataset, v);
-    else if (k.startsWith('on') && typeof v === 'function') n.addEventListener(k.slice(2), v as EventListener);
-    else if (typeof v === 'string' || typeof v === 'number' || typeof v === 'boolean') {
-      if (k === 'class') n.className = String(v);
-      else n.setAttribute(k, String(v));
+function setAttr(n: HTMLElement, k: string, v: string | number | boolean): void {
+  if (k === 'class') n.className = String(v);
+  else n.setAttribute(k, String(v));
+}
+
+function setProp(n: HTMLElement, k: string, v: unknown): void {
+  if (v === undefined || v === null || v === false) return;
+  if (k === 'dataset' && typeof v === 'object') {
+    Object.assign(n.dataset, v);
+    return;
+  }
+  if (k.startsWith('on') && typeof v === 'function') {
+    n.addEventListener(k.slice(2), v as EventListener);
+    return;
+  }
+  if (typeof v === 'string' || typeof v === 'number' || typeof v === 'boolean') {
+    setAttr(n, k, v);
+  }
+}
+
+function appendKids(n: HTMLElement, kids: (Child | Child[])[]): void {
+  for (const kid of kids.flat()) {
+    if (kid !== null && kid !== undefined && kid !== false) {
+      n.append(kid);
     }
   }
-  for (const kid of kids.flat()) if (kid !== null && kid !== undefined && kid !== false) n.append(kid);
+}
+
+function el<K extends keyof HTMLElementTagNameMap>(tag: K, props: Props = {}, ...kids: (Child | Child[])[]): HTMLElementTagNameMap[K] {
+  const n = document.createElement(tag);
+  for (const [k, v] of Object.entries(props)) setProp(n, k, v);
+  appendKids(n, kids);
   return n;
 }
 

@@ -7,6 +7,7 @@ import { readFileSync } from 'node:fs';
 import { Window } from 'happy-dom';
 import { start } from './app.ts';
 import type { Api } from './app.ts';
+import { COLUMNS } from './model.ts';
 import type { Meta, RepoEntry, RepoStats, Snapshot, UrgentIssue } from './model.ts';
 
 const HTML = readFileSync(new URL('../index.html', import.meta.url), 'utf8');
@@ -226,9 +227,47 @@ test('links in a row open on GitHub without dragging or switching views', async 
   assert.deepEqual(h.calls.filter((c) => c.cmd === 'open_url').map((c) => c.args?.url), ['https://github.com/o/gamma']);
 });
 
+test('the Fetched column shows each repo’s data age and sorts by it, freshest first ascending', async () => {
+  const ago = (s: number) => new Date(Date.now() - s * 1000).toISOString();
+  const h = await setup({ snap: snapshot([
+    repo('alpha', {}, { fetched_at: ago(56 * 60) }),
+    repo('beta', {}, { fetched_at: ago(55 * 60) }),
+    repo('gamma', null, { fetched_at: null }),
+    repo('delta', null, { fetched_at: ago(2 * 3600), error: 'boom' }),
+  ]) });
+  const fetched = (name: string) => h.row(name).cells[1]!.textContent;
+  assert.equal(h.doc.querySelectorAll('thead tr.cols th')[1]!.textContent, 'Fetched');
+  assert.equal(fetched('beta'), '55m');
+  assert.equal(fetched('delta'), '2h', 'a failed poll still shows when the data was fetched');
+  assert.equal(fetched('gamma'), '—');
+  header(h, 'Fetched').click();
+  assert.deepEqual(h.rows(), ['delta', 'alpha', 'beta', 'gamma'], 'oldest data first, never-fetched last');
+  header(h, 'Fetched').click();
+  assert.deepEqual(h.rows(), ['beta', 'alpha', 'delta', 'gamma']);
+});
+
+test('a row’s refresh button refetches only that repo, and spins while it waits', async () => {
+  const h = await setup();
+  const button = () => h.row('gamma').querySelector<HTMLButtonElement>('.row-refresh')!;
+  pointer(h, button(), 'pointerdown', 25);
+  pointer(h, h.win as unknown as EventTarget, 'pointermove', 60);
+  button().click();
+  assert.equal(h.view(), 'repos', 'not a click on the row');
+  assert.deepEqual(h.rows(), ['beta', 'gamma', 'alpha'], 'not a drag');
+  assert.deepEqual(h.calls.filter((c) => c.cmd.startsWith('refresh')), [{ cmd: 'refresh_repo', args: { repo: 'o/gamma' } }]);
+  assert.ok(button().classList.contains('spinning'), 'spins at once, before the poller answers');
+
+  h.emit('craft:snapshot', { ...snapshot(), fetching: 'o/gamma', requested: ['o/alpha'] });
+  assert.ok(button().classList.contains('spinning'));
+  assert.ok(h.row('alpha').querySelector('.row-refresh.spinning'), 'queued counts too');
+  assert.ok(!h.row('beta').querySelector('.row-refresh.spinning'));
+  h.emit('craft:snapshot', snapshot());
+  assert.ok(!h.doc.querySelector('.row-refresh.spinning'), 'done');
+});
+
 test('the window picker switches the activity columns and remembers', async () => {
   const h = await setup({ snap: snapshot([repo('alpha', { recent: { '7d': { commits: 7, prs_opened: 0, prs_merged: 0, issues_opened: 0, people: 0 } } })]) });
-  const commits = () => h.row('alpha').cells[9]!.textContent;
+  const commits = () => h.row('alpha').cells[COLUMNS.findIndex((c) => c.key === 'recent_commits')]!.textContent;
   assert.equal(commits(), '—', 'the default 4 h window has no data');
   const picker = h.doc.querySelector<HTMLSelectElement>('.window-picker')!;
   picker.value = '7d';

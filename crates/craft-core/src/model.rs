@@ -189,6 +189,13 @@ pub struct Snapshot {
     pub error: Option<String>,
     /// The GitHub token the last poll used; `None` before the first poll.
     pub token: Option<TokenStatus>,
+    /// The repo being fetched right now. Not restored from the cache.
+    #[serde(skip_deserializing)]
+    pub fetching: Option<String>,
+    /// Repos refreshed by hand from their row, waiting their turn (first
+    /// asked, first fetched). Not restored from the cache.
+    #[serde(skip_deserializing)]
+    pub requested: Vec<String>,
 }
 
 /// How often the poller fetches each repository (see [`RepoEntry::due_at`]).
@@ -232,6 +239,30 @@ impl Snapshot {
             .iter()
             .filter(|e| e.due_at(schedule) <= now)
             .min_by_key(|e| (!e.is_hole(), e.fetched_at))
+    }
+
+    /// Queue `repo` to be fetched on its own, ahead of the schedule. False if
+    /// it isn't configured, or is already queued or being fetched.
+    pub fn request(&mut self, repo: &str) -> bool {
+        let known = self.repos.iter().any(|e| e.repo == repo);
+        let pending =
+            self.fetching.as_deref() == Some(repo) || self.requested.iter().any(|r| r == repo);
+        if !known || pending {
+            return false;
+        }
+        self.requested.push(repo.to_string());
+        true
+    }
+
+    /// The next repo refreshed by hand, dropping any no longer configured.
+    pub fn take_requested(&mut self) -> Option<String> {
+        while !self.requested.is_empty() {
+            let repo = self.requested.remove(0);
+            if self.repos.iter().any(|e| e.repo == repo) {
+                return Some(repo);
+            }
+        }
+        None
     }
 
     /// When the next repo falls due; `None` with nothing configured.
@@ -367,6 +398,38 @@ mod tests {
             "a manual refresh makes everything due, stalest first"
         );
         assert!(Snapshot::default().next_due_at(&sched).is_none());
+    }
+
+    #[test]
+    fn rows_refreshed_by_hand_queue_once_each() {
+        let mut s = Snapshot::default();
+        s.sync_repos(&["o/a".into(), "o/b".into(), "o/c".into()]);
+        assert!(s.request("o/b"));
+        assert!(!s.request("o/b"), "already queued");
+        assert!(!s.request("o/zzz"), "not configured");
+        assert!(s.request("o/c"));
+        assert!(s.request("o/a"));
+        s.sync_repos(&["o/b".into(), "o/a".into()]);
+        assert_eq!(s.take_requested().as_deref(), Some("o/b"));
+        s.fetching = Some("o/b".into());
+        assert!(!s.request("o/b"), "being fetched");
+        assert_eq!(
+            s.take_requested().as_deref(),
+            Some("o/a"),
+            "o/c left the config"
+        );
+        assert_eq!(s.take_requested(), None);
+    }
+
+    #[test]
+    fn hand_refreshes_are_not_restored_from_the_cache() {
+        let mut s = Snapshot::default();
+        s.sync_repos(&["o/a".into()]);
+        s.request("o/a");
+        s.fetching = Some("o/a".into());
+        let back: Snapshot = serde_json::from_str(&serde_json::to_string(&s).unwrap()).unwrap();
+        assert!(back.requested.is_empty());
+        assert_eq!(back.fetching, None);
     }
 
     #[test]

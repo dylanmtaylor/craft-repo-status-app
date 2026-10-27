@@ -78,6 +78,10 @@ export interface Snapshot {
   error: string | null;
   /** The token the last poll used; null (or absent, from an older build) before the first poll. */
   token?: TokenStatus | null;
+  /** The repo being fetched right now (absent from older builds). */
+  fetching?: string | null;
+  /** Repos refreshed by hand from their row, waiting their turn. */
+  requested?: string[];
 }
 
 export interface TokenStatus {
@@ -129,7 +133,8 @@ export const windowById = (id: string): ActivityWindow =>
 
 // ───────────────────────────── columns ─────────────────────────────
 
-export type Kind = 'text' | 'num' | 'date' | 'version';
+/** `age` is a timestamp shown and sorted by how long ago it was: ascending puts the newest first. */
+export type Kind = 'text' | 'num' | 'date' | 'age' | 'version';
 export type Value = string | number | null;
 
 export interface Column {
@@ -156,6 +161,7 @@ export const RECENT = 'recent';
 
 export const COLUMNS: readonly Column[] = [
   { key: 'name', label: 'Repo', kind: 'text', group: '', get: (e) => e.repo.split('/').pop() ?? e.repo },
+  { key: 'fetched', label: 'Fetched', kind: 'age', group: '', title: 'Time since this repo’s data was last fetched in full (failed polls keep the older time)', get: (e) => e.fetched_at ?? null },
   { key: 'urgency', label: 'Urgency', kind: 'num', group: 'Fix first', title: 'Sum of the top five open-issue urgency scores' },
   { key: 'critical_issues', label: 'Critical', kind: 'num', group: 'Fix first', title: 'Open issues that mention a crash, hang, freeze, data loss, launch failure or security problem' },
   { key: 'open_prs', label: 'PRs', kind: 'num', group: 'Open', title: 'Open pull requests' },
@@ -216,6 +222,7 @@ function cmpValues(kind: Kind, a: string | number, b: string | number): number {
   switch (kind) {
     case 'text': return String(a).localeCompare(String(b), undefined, { sensitivity: 'base', numeric: true });
     case 'date': return Date.parse(String(a)) - Date.parse(String(b));
+    case 'age': return Date.parse(String(b)) - Date.parse(String(a));
     case 'version': return cmpArrays(versionKey(String(a)), versionKey(String(b)));
     default: return Number(a) - Number(b);
   }
@@ -287,6 +294,11 @@ export function freshness(snap: Pick<Snapshot, 'repos' | 'stale_after_secs'>, no
   const oldest = times.length && times.every((t) => t !== null) ? Math.min(...(times as number[])) : null;
   const stale = !snap.repos.length || snap.repos.some((r) => isStale(r, snap.stale_after_secs, now));
   return { oldest, stale };
+}
+
+/** A row's own refresh is queued or under way, so its button spins. */
+export function isRefreshing(snap: Pick<Snapshot, 'fetching' | 'requested'>, repo: string): boolean {
+  return snap.fetching === repo || (snap.requested ?? []).includes(repo);
 }
 
 /** The footer's account of the GitHub token: `bad` when polling can't work. */

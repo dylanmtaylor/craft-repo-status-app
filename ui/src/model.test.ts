@@ -2,7 +2,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import {
   sortEntries, manualOrder, orderedEntries, nextSort, dropIndex, MANUAL, versionKey, freshness, isStale, ago, compact, tokenStatus,
-  totals, urgentAcross, defaultDir, value, windowById, WINDOWS, COLUMNS, COLUMN,
+  totals, urgentAcross, isRefreshing, defaultDir, value, windowById, WINDOWS, COLUMNS, COLUMN,
 } from './model.ts';
 import type { Activity, RepoEntry, RepoStats, UrgentIssue } from './model.ts';
 
@@ -65,6 +65,21 @@ test('dates and names', () => {
   assert.equal(defaultDir('name'), 'asc');
   assert.equal(defaultDir('downloads_total'), 'desc');
   assert.equal(defaultDir('oldest_open_pr_at'), 'asc');
+});
+
+test('data age sorts by the exact fetch time, whatever the coarse label', () => {
+  const at = [
+    entry('a', {}, '2026-10-08T10:04:00Z'),
+    entry('b', {}, '2026-10-08T10:05:00Z'),
+    entry('c', null, null),
+    entry('d', null, '2026-10-08T08:00:00Z'),
+  ];
+  const now = Date.parse('2026-10-08T12:00:00Z');
+  assert.equal(ago(at[0]!.fetched_at, now), ago(at[1]!.fetched_at, now), '1 h 56 m and 1 h 55 m both read 1h');
+  assert.equal(names(sortEntries(at, 'fetched', 'asc')), 'badc', 'ascending: youngest first');
+  assert.equal(names(sortEntries(at, 'fetched', 'desc')), 'dabc');
+  assert.equal(defaultDir('fetched'), 'desc', 'stalest first on the first click');
+  assert.equal(COLUMNS[1]!.key, 'fetched');
 });
 
 test('names compare numerically and ignore case', () => {
@@ -182,6 +197,13 @@ test('recent-activity columns follow the selected window', () => {
   assert.equal(names(sortEntries(e, 'recent_merged', 'desc', 'all')), 'abold');
   assert.equal(value(a, 'recent_commits', 'release'), null, 'no release');
   assert.deepEqual(WINDOWS.map((w) => w.id), ['10m', '30m', '1h', '4h', '12h', '1d', '7d', 'release', 'all']);
+});
+
+test('a row is refreshing while its repo is being fetched or queued', () => {
+  assert.equal(isRefreshing({ fetching: 'o/a', requested: ['o/b'] }, 'o/a'), true);
+  assert.equal(isRefreshing({ fetching: 'o/a', requested: ['o/b'] }, 'o/b'), true);
+  assert.equal(isRefreshing({ fetching: 'o/a', requested: ['o/b'] }, 'o/c'), false);
+  assert.equal(isRefreshing({}, 'o/a'), false, 'a snapshot from an older build');
 });
 
 test('token status', () => {

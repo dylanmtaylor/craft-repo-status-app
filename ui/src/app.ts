@@ -3,7 +3,7 @@
 
 import {
   COLUMNS, RECENT, WINDOWS, MANUAL, windowById, value, orderedEntries, nextSort, dropIndex,
-  freshness, ago, totals, urgentAcross, tokenStatus,
+  freshness, ago, totals, urgentAcross, tokenStatus, isRefreshing,
 } from './model.ts';
 import type { Column, Meta, RepoEntry, Snapshot, Sort } from './model.ts';
 
@@ -67,6 +67,18 @@ const shortName = (repo: string): string => repo.split('/').pop() ?? repo;
 const classes = (...cs: (string | false | null | undefined)[]): string => cs.filter(Boolean).join(' ');
 const DAY = 86400e3;
 
+/** The toolbar's refresh arrow, as an element (SVG needs its namespace). */
+function refreshIcon(): SVGSVGElement {
+  const ns = 'http://www.w3.org/2000/svg';
+  const svg = document.createElementNS(ns, 'svg');
+  svg.setAttribute('viewBox', '0 0 16 16');
+  svg.setAttribute('aria-hidden', 'true');
+  const path = document.createElementNS(ns, 'path');
+  path.setAttribute('d', 'M13.5 8a5.5 5.5 0 1 1-1.6-3.9M13.5 2v3h-3');
+  svg.append(path);
+  return svg;
+}
+
 /** Starts the UI in the current document. Call once; returns a function that stops its clock. */
 export function start(api: Api): () => void {
   const state: State = {
@@ -105,6 +117,10 @@ export function start(api: Api): () => void {
         : entry.inaccessible ? 'Not accessible (private, or not found)'
         : entry.fetched_at ? `Fetched ${localTime(entry.fetched_at)}` : 'Not fetched yet';
       return el('span', { class: 'repo', title: tip }, el('span', { class: 'dot' }), appIcon(entry), link(String(v), gh(entry.repo)));
+    }
+    if (col.key === 'fetched') {
+      const age = v ? el('span', { title: `Fetched ${localTime(String(v))}` }, ago(String(v))) : el('span', { class: 'muted', title: 'Not fetched yet' }, '—');
+      return el('span', { class: 'fetched' }, age, rowRefresh(entry));
     }
     if (!s) return entry.inaccessible ? document.createTextNode('') : el('span', { class: 'muted' }, '—');
     switch (col.key) {
@@ -149,6 +165,21 @@ export function start(api: Api): () => void {
       return el('span', { title: localTime(String(v)), class: old ? 'old' : '' }, ago(String(v)));
     }
     return document.createTextNode(num(v));
+  }
+
+  /** The tiny button that refetches just this row. */
+  function rowRefresh(entry: RepoEntry): HTMLButtonElement {
+    const busy = state.snap ? isRefreshing(state.snap, entry.repo) : false;
+    return el('button', {
+      class: classes('row-refresh', busy && 'spinning'),
+      title: busy ? 'Refreshing this repo…' : `Refresh only ${shortName(entry.repo)}`,
+      'aria-label': `Refresh ${shortName(entry.repo)}`,
+      onclick: (e: Event) => {
+        e.stopPropagation();
+        (e.currentTarget as HTMLElement).classList.add('spinning');
+        api.invoke('refresh_repo', { repo: entry.repo }).catch((err: unknown) => console.warn(err));
+      },
+    }, refreshIcon());
   }
 
   // ───────────────────────────── rendering ─────────────────────────────
@@ -238,7 +269,7 @@ export function start(api: Api): () => void {
   let justDragged = false;
 
   function startRowDrag(e: PointerEvent): void {
-    if (e.button !== 0 || (e.target as Element).closest('.link')) return;
+    if (e.button !== 0 || (e.target as Element).closest('.link, .row-refresh')) return;
     drag = { row: e.currentTarget as HTMLTableRowElement, startY: e.clientY, moved: false };
     window.addEventListener('pointermove', moveRowDrag);
     window.addEventListener('pointerup', endRowDrag);

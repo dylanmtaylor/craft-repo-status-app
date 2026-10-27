@@ -11,3 +11,4 @@ craft_status_config.toml
 .craft_status_config.toml
 
 /_site/
+/plan/
